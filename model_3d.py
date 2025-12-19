@@ -11,8 +11,61 @@ from tensorflow.keras.utils import to_categorical
 import tensorflow.keras.layers as KL
 from tensorflow.keras.models import Model
 import tensorflow.keras.backend as K
+from tensorflow.keras.layers import Lambda
 
 from tensorflow.keras import layers, models, optimizers
+
+
+def get_pig_model_n(n,k1,k2):
+    epsilon =1e-7
+    min_max_norm = Lambda(lambda x: (x - K.min(x)) / (K.max(x) - K.min(x)+ epsilon) * (1.0) )
+    
+    print("model is loading")
+    en = [16 ,16 ,64 ,64 ,64 ,64 ,64 ,64 ,64 ,64 ,64]
+    de = [64 ,64 ,64 ,64, 64 ,64 ,64, 64, 64, 16 ,16 ,2]
+    input_img = Input(shape=(param_3d.img_size_192,param_3d.img_size_192,param_3d.img_size_192, 1))
+    unet_model = vxm.networks.Unet(inshape=(param_3d.img_size_192,param_3d.img_size_192,param_3d.img_size_192, 1), nb_features=(en, de),
+                       nb_conv_per_level=2,
+                       final_activation_function='softmax')
+        
+    latest_weight = max(glob.glob(os.path.join("models_gmm_"+str(n)+"_"+str(k1)+"_"+str(k2), 'weights_epoch_*.h5')), key=os.path.getctime, default=None)
+    if unique:
+        latest_weight = max(glob.glob(os.path.join("models_gmm_"+str(n)+"_unique_"+str(k1)+"_"+str(k2), 'weights_epoch_*.h5')), key=os.path.getctime, default=None)
+    if t1:
+        latest_weight = max(glob.glob(os.path.join("models_gmm_"+str(n)+"_t1_"+str(k1)+"_"+str(k2), 'weights_epoch_*.h5')), key=os.path.getctime, default=None)
+    
+    print(latest_weight)
+    generated_img_norm = min_max_norm(input_img)
+    segmentation = unet_model(generated_img_norm)
+    combined_model = Model(inputs=input_img, outputs=segmentation)
+    combined_model.load_weights(latest_weight)
+    return combined_model
+    
+def get_pig_model(k1,k2):
+    epsilon =1e-7
+    min_max_norm = Lambda(lambda x: (x - K.min(x)) / (K.max(x) - K.min(x)+ epsilon) * (1.0) )
+    
+    print("model is loading")
+    en = [16 ,16 ,64 ,64 ,64 ,64 ,64 ,64 ,64 ,64 ,64]
+    de = [64 ,64 ,64 ,64, 64 ,64 ,64, 64, 64, 16 ,16 ,2]
+    input_img = Input(shape=(param_3d.img_size_192,param_3d.img_size_192,param_3d.img_size_192, 1))
+    unet_model = vxm.networks.Unet(inshape=(param_3d.img_size_192,param_3d.img_size_192,param_3d.img_size_192, 1), nb_features=(en, de),
+                       nb_conv_per_level=2,
+                       final_activation_function='softmax')
+        
+    latest_weight = max(glob.glob(os.path.join("models_gmm_"+str(k1)+"_"+str(k2), 'weights_epoch_*.h5')), key=os.path.getctime, default=None)
+    if t1:
+        latest_weight = max(glob.glob(os.path.join("models_gmm_t1_"+str(k1)+"_"+str(k2), 'weights_epoch_*.h5')), key=os.path.getctime, default=None)
+    elif t2:
+        latest_weight = max(glob.glob(os.path.join("models_gmm_t2_"+str(k1)+"_"+str(k2), 'weights_epoch_*.h5')), key=os.path.getctime, default=None)
+
+    print(latest_weight)
+    generated_img_norm = min_max_norm(input_img)
+    segmentation = unet_model(generated_img_norm)
+    combined_model = Model(inputs=input_img, outputs=segmentation)
+    combined_model.load_weights(latest_weight)
+    return combined_model
+
 
 def unet_model(input_shape):
     inputs = tf.keras.Input(input_shape)

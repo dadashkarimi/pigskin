@@ -114,6 +114,7 @@ import tensorflow as tf
 import numpy as np
 from scipy.ndimage import gaussian_filter
 from scipy.interpolate import splprep, splev
+import torch
 
 def load_retina_vessels_with_volume(folder_path, shape=(96, 96, 96), max_images=100):
     """
@@ -425,6 +426,206 @@ import numpy as np
 from scipy.ndimage import rotate, shift
 
 import tensorflow as tf
+
+def visualize_tensors(tensors, col_wrap=8, col_names=None, title=None, 
+                      figsize_unit=2.5, percentiles=(0.5, 99.5), 
+                      cmap='gray', axes_off=True, return_fig_axes=False):
+    """
+    Visualizes a dictionary of tensors as images in a grid, inspired by neurite.py.
+
+    Args:
+        tensors (dict): A dictionary where keys are group names (str) and
+                        values are lists or 1D iterable of tensors. Each tensor
+                        is expected to be an image (2D, or 3D: C H W, or H W C).
+                        If a tensor is None, it will be skipped.
+        col_wrap (int): Number of columns to wrap images into for each group.
+        col_names (list, optional): List of strings for column titles.
+                                    Applies only to the first row of the overall plot.
+        title (str, optional): Overall title for the plot.
+        figsize_unit (float): Base size for each subplot (width and height).
+        percentiles (tuple): Tuple (lower_percentile, upper_percentile) for
+                             intensity scaling (vmin, vmax) for 2D (grayscale) images.
+                             Commonly (0.5, 99.5) to clip outliers.
+        cmap (str): Colormap for 2D (grayscale) images. Defaults to 'gray'.
+        axes_off (bool): If True, turn off x and y axis ticks and grid.
+        return_fig_axes (bool): If True, return the matplotlib Figure and Axes objects.
+
+    Returns:
+        tuple: (fig, axes) if return_fig_axes is True, otherwise None.
+    """
+    if not isinstance(tensors, dict):
+        raise TypeError("Input 'tensors' must be a dictionary.")
+    
+    if not tensors:
+        print("No tensor groups provided to visualize.")
+        # Create an empty plot if title is given, otherwise just return.
+        if title:
+            fig, ax = plt.subplots(1, 1, figsize=(figsize_unit, figsize_unit))
+            ax.text(0.5, 0.5, 'No data to display', horizontalalignment='center', verticalalignment='center', transform=ax.transAxes, fontsize=14)
+            ax.axis('off')
+            if title:
+                plt.suptitle(title, fontsize=20)
+            plt.tight_layout()
+            plt.show()
+            if return_fig_axes:
+                return fig, ax
+        return
+
+    # Determine maximum number of tensors in any group for layout calculation
+    max_tensors_in_group = 0
+    for grp_tensors in tensors.values():
+        if not isinstance(grp_tensors, (list, tuple)):
+            grp_tensors = list(grp_tensors) # Try to convert to list if it's an iterable like a generator
+        if len(grp_tensors) > max_tensors_in_group:
+            max_tensors_in_group = len(grp_tensors)
+
+    num_groups = len(tensors)
+    num_cols = col_wrap
+    rows_per_group = math.ceil(max_tensors_in_group / num_cols)
+    num_rows = rows_per_group * num_groups
+
+    fig, axes = plt.subplots(num_rows, num_cols, figsize=(figsize_unit * num_cols, figsize_unit * num_rows))
+
+    # Ensure axes is always a 2D array, even for 1x1, 1xN, or Nx1 cases
+    if num_rows == 1 and num_cols == 1:
+        axes = np.array([[axes]])
+    elif num_rows == 1:
+        axes = axes.reshape(1, num_cols)
+    elif num_cols == 1:
+        axes = axes.reshape(num_rows, 1)
+
+    lower_perc, upper_perc = percentiles
+
+    # Iterate through groups and tensors
+    for g, (grp_name, grp_tensors) in enumerate(tensors.items()):
+        if not isinstance(grp_tensors, (list, tuple)):
+            grp_tensors = list(grp_tensors) # Ensure it's a list for consistent indexing
+
+        for k, tensor in enumerate(grp_tensors):
+            current_col = k % num_cols
+            # Calculate the overall row for the current tensor
+            current_row = g * rows_per_group + (k // num_cols)
+
+            # Skip if the tensor is None or if we're out of bounds (shouldn't happen with correct row/col logic)
+            if tensor is None:
+                ax = axes[current_row, current_col]
+                ax.text(0.5, 0.5, 'N/A', horizontalalignment='center', verticalalignment='center', transform=ax.transAxes, color='lightgray')
+                continue # Move to the next tensor
+
+            ax = axes[current_row, current_col]
+
+            # Convert tensor to numpy array and remove singleton dimensions
+            if isinstance(tensor, torch.Tensor):
+                x = tensor.detach().cpu().numpy()
+            else: # Assume it's already a numpy array or convertible
+                x = np.asarray(tensor)
+            
+            x = x.squeeze() # Remove single-dimensional entries (e.g., (1, H, W) -> (H, W))
+
+            if x.ndim == 2: # Grayscale image (H, W)
+                # Dynamic vmin/vmax based on percentiles for robust scaling
+                data_min = np.percentile(x, lower_perc)
+                data_max = np.percentile(x, upper_perc)
+                
+                # Handle cases where percentiles might be identical (flat image) or cause issues
+                if abs(data_max - data_min) < 1e-6:
+                    data_min = x.min()
+                    data_max = x.max()
+                    if abs(data_max - data_min) < 1e-6 and data_max != 0: # Still flat, but non-zero
+                        data_min = 0 # Assume 0 is a good lower bound
+                        data_max = data_max # Use the actual max
+                    elif data_max == 0: # All zeros
+                        data_min = 0
+                        data_max = 1 # Provide a range for visibility
+
+                ax.imshow(x, vmin=data_min, vmax=data_max, cmap=cmap)
+
+            elif x.ndim == 3: # Color image (C, H, W) or (H, W, C)
+                # Heuristic to determine channel axis
+                # If the first dimension is 1, 3, or 4, assume C H W and transpose
+                if x.shape[0] in [1, 3, 4] and x.shape[1] > 4 and x.shape[2] > 4: # Crude check for C, H, W
+                    # If single channel, convert to grayscale 2D
+                    if x.shape[0] == 1:
+                        data_min = np.percentile(x.squeeze(), lower_perc)
+                        data_max = np.percentile(x.squeeze(), upper_perc)
+                        if abs(data_max - data_min) < 1e-6:
+                            data_min = x.min()
+                            data_max = x.max()
+                            if abs(data_max - data_min) < 1e-6 and data_max != 0:
+                                data_min = 0
+                                data_max = data_max
+                            elif data_max == 0:
+                                data_min = 0
+                                data_max = 1
+                        ax.imshow(x.squeeze(0), vmin=data_min, vmax=data_max, cmap=cmap)
+                    else: # Assume RGB/RGBA
+                        # Prefer einops if available for robust rearrangement
+                        # if E:
+                        #     ax.imshow(E.rearrange(x, 'C H W -> H W C'))
+                        # else:
+                        ax.imshow(x.transpose(1, 2, 0)) # Fallback: HWC
+                elif x.shape[2] in [1, 3, 4] and x.shape[0] > 4 and x.shape[1] > 4: # Assume H W C
+                     # If single channel, convert to grayscale 2D
+                    if x.shape[2] == 1:
+                        data_min = np.percentile(x.squeeze(), lower_perc)
+                        data_max = np.percentile(x.squeeze(), upper_perc)
+                        if abs(data_max - data_min) < 1e-6:
+                            data_min = x.min()
+                            data_max = x.max()
+                            if abs(data_max - data_min) < 1e-6 and data_max != 0:
+                                data_min = 0
+                                data_max = data_max
+                            elif data_max == 0:
+                                data_min = 0
+                                data_max = 1
+                        ax.imshow(x.squeeze(2), vmin=data_min, vmax=data_max, cmap=cmap)
+                    else: # HWC is already suitable for imshow
+                        ax.imshow(x)
+                else:
+                    ax.text(0.5, 0.5, f'Unsupported 3D shape: {x.shape}', 
+                            horizontalalignment='center', verticalalignment='center', 
+                            transform=ax.transAxes, color='red', fontsize=8)
+                    print(f"Warning: Tensor '{grp_name}'[{k}] has an unsupported 3D shape: {x.shape}. Expected (C, H, W) or (H, W, C) where C is 1, 3, or 4.")
+
+            else: # Other dimensions
+                ax.text(0.5, 0.5, f'Unsupported shape: {x.shape}', 
+                        horizontalalignment='center', verticalalignment='center', 
+                        transform=ax.transAxes, color='red', fontsize=8)
+                print(f"Warning: Tensor '{grp_name}'[{k}] has an unsupported shape: {x.shape}. Only 2D or 3D images are supported.")
+
+            # Set group label for the first column of each group's first row
+            if current_col == 0 and k % col_wrap == 0: # Only set for the first image in each visual row of the group
+                ax.set_ylabel(grp_name, fontsize=14)
+            
+            # Set column names for the very first row of the entire plot
+            if col_names is not None and current_row == 0 and current_col < len(col_names):
+                ax.set_title(col_names[current_col])
+
+    # Clean up and format all subplots
+    for i in range(num_rows):
+        for j in range(num_cols):
+            ax = axes[i, j]
+            # Hide unused subplots
+            if i * num_cols + j >= num_rows * num_cols: # This condition might be tricky with varying group lengths
+                 fig.delaxes(ax) # Deletes the axes object
+            
+            # Ensure proper display for all subplots
+            if axes_off:
+                ax.grid(False)
+                ax.set_xticks([])
+                ax.set_yticks([])
+
+    if title:
+        # Adjust layout to make space for suptitle
+        plt.suptitle(title, fontsize=20)
+        plt.tight_layout(rect=[0, 0, 1, 0.96]) # Leave space at the top
+    else:
+        plt.tight_layout()
+
+    plt.show()
+
+    if return_fig_axes:
+        return fig, axes
 
 def augment_3d(image, mask):
     """
@@ -1897,25 +2098,24 @@ def dynamic_resize(image, target_width=192):
     return new_voxsize
 
 
+
+from datetime import datetime
+import os
 from tensorflow.keras.callbacks import Callback
 
 class PeriodicWeightsSaver(Callback):
-    def __init__(self, filepath, latest_epoch=0, save_freq=200, **kwargs):
+    def __init__(self, filepath, save_freq=200, **kwargs):
         super().__init__(**kwargs)
         self.filepath = filepath
         self.save_freq = save_freq
-        self.latest_epoch = latest_epoch  # Track the latest saved epoch
+        os.makedirs(self.filepath, exist_ok=True)
 
     def on_epoch_end(self, epoch, logs=None):
-        # Save the weights every `save_freq` epochs
         if (epoch + 1) % self.save_freq == 0:
-            weights_path = os.path.join(self.filepath, f"weights_epoch_{epoch + 1}.h5")
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+            weights_path = os.path.join(self.filepath, f"weights_{timestamp}.h5")
             self.model.save_weights(weights_path)
-            self.latest_epoch = epoch + 1  # Update the latest saved epoch
             print(f"Saved weights to {weights_path}")
-
-    def get_latest_epoch(self):
-        return self.latest_epoch
 
 
 # class PeriodicWeightsSaver(tf.keras.callbacks.Callback):
@@ -1933,42 +2133,165 @@ class PeriodicWeightsSaver(Callback):
 
 from tensorflow.keras.callbacks import Callback
 
+import os
+import tensorflow as tf
+from tensorflow.keras.callbacks import Callback # Assuming this is a Keras Callback
+import glob
+from datetime import datetime
+
+import os
+import tensorflow as tf
+from tensorflow.keras.callbacks import Callback # Assuming this is a Keras Callback
+import glob
+from datetime import datetime
+from tensorboard.backend.event_processing.event_accumulator import EventAccumulator # Added import
+import os
+import tensorflow as tf
+from tensorflow.keras.callbacks import Callback # Assuming this is a Keras Callback
+import glob
+from datetime import datetime
+from tensorboard.backend.event_processing.event_accumulator import EventAccumulator # Added import
+
 class CustomTensorBoard(Callback):
     def __init__(self, base_log_dir, models_dir, **kwargs):
-        super(CustomTensorBoard, self).__init__()
+        # Remove arguments that are specific to tf.keras.callbacks.TensorBoard
+        # and not supported by the base Callback class.
+        kwargs.pop('histogram_freq', None)
+        kwargs.pop('write_graph', None)
+        kwargs.pop('write_images', None)
+        kwargs.pop('write_steps_per_second', None)
+        kwargs.pop('update_freq', None)
+        kwargs.pop('profile_batch', None)
+        kwargs.pop('embeddings_freq', None)
+        kwargs.pop('embeddings_metadata', None)
+
+        super(CustomTensorBoard, self).__init__(**kwargs)
         self.base_log_dir = base_log_dir
-        self.train_log_dir = os.path.join(base_log_dir, 'train')
         self.models_dir = models_dir
-        self.latest_epoch = 0
-        latest_weight = max(glob.glob(os.path.join(self.train_log_dir, 'events*.v2')), key=os.path.getctime, default=None)
-        if latest_weight is not None:
-            latest_epoch = int(latest_weight.split('.')[-2])
-            print("latest epoch is ",10+latest_epoch)
-            self.latest_epoch = 10+latest_epoch
-    
+
+        # Define the fixed log directory path for TensorBoard events.
+        # This will allow logs to append to existing files in this specific directory.
+        self.train_log_dir = os.path.join(base_log_dir, 'train')
+        
+        # Initialize the file writer and resume point. They will be set in on_train_begin.
+        self.file_writer = None
+        self.latest_epoch_resume_point = 0 
 
     def set_model(self, model):
         self.model = model
 
     def on_train_begin(self, logs=None):
-        # Ensure the log directory exists
+        # Ensure the fixed log directory exists
         os.makedirs(self.train_log_dir, exist_ok=True)
         
-        # Load weights from the latest checkpoint to continue training
-        latest_checkpoint = tf.train.latest_checkpoint(self.train_log_dir)
-        if latest_checkpoint:
-            print(f"Resuming training from checkpoint: {latest_checkpoint}")
-            # Extract the epoch number from the checkpoint file name
-            # self.latest_epoch = int(latest_checkpoint.split('-')[-1].split('.')[0])
-            print(f"Resuming from epoch {self.latest_epoch}")
+        # Create a new TensorBoard file writer for this run's log directory.
+        # This will automatically create a new event file with a timestamp suffix
+        # each time this method is called, as long as the previous writer was closed.
+        self.file_writer = tf.summary.create_file_writer(self.train_log_dir)
+
+        # Logic to determine the starting global step for logging in TensorBoard.
+        # This will now be based on the latest step found in existing TensorBoard event files.
+        self.latest_epoch_resume_point = 0
+        
+        # Find all event files in the train log directory
+        event_files = sorted(
+            [os.path.join(self.train_log_dir, f) for f in os.listdir(self.train_log_dir) if f.startswith("events.out.tfevents")],
+            key=os.path.getmtime # Sort by modification time to get the latest ones
+        )
+
+        if event_files:
+            max_step_found = -1
+            # Iterate through all event files to find the absolute maximum step for 'loss'
+            for event_file in event_files:
+                acc = EventAccumulator(event_file)
+                try:
+                    acc.Reload()
+                    # Check for 'scalars' tag, as tf.summary.scalar writes scalar values
+                    if 'loss' in acc.Tags().get('scalars', []):
+                        loss_events = acc.Scalars('loss')
+                        if loss_events:
+                            current_file_max_step = max(e.step for e in loss_events)
+                            max_step_found = max(max_step_found, current_file_max_step)
+                except Exception as e:
+                    print(f"Warning: Could not read event file '{event_file}': {e}")
+            
+            if max_step_found != -1:
+                # Set the resume point to the maximum step found + 1, ensuring continuity
+                self.latest_epoch_resume_point = max_step_found + 1
+                print(f"Detected logging resume point from existing TensorBoard logs: step {self.latest_epoch_resume_point}")
+            else:
+                print("No 'loss' scalar events found in existing log files. Starting logging from step 0.")
+        else:
+            print("No existing TensorBoard log files found. Starting new training run from step 0.")
+
+        # The checkpoint parsing logic is no longer used for determining the resume point for logging.
+        # It's assumed the model itself will handle loading weights based on `models_dir`
+        # and that the logging step should align with the actual last logged event.
 
     def on_epoch_end(self, epoch, logs=None):
-        # Log metrics for TensorBoard
-        with tf.summary.create_file_writer(self.train_log_dir, filename_suffix=".v2").as_default():
+        # Close the previous writer to finalize the current event file
+        if self.file_writer:
+            self.file_writer.close()
+    
+        # Recreate the writer in the SAME log directory
+        # This forces TensorFlow to create a NEW .v2 event file with a new timestamp
+        self.file_writer = tf.summary.create_file_writer(self.train_log_dir)
+    
+        with self.file_writer.as_default():
+            # Maintain global step continuity
+            global_step = self.latest_epoch_resume_point + epoch
             for metric_name, value in logs.items():
-                tf.summary.scalar(metric_name, value, step=self.latest_epoch+epoch)
+                tf.summary.scalar(metric_name, value, step=global_step)
+    
+        self.file_writer.flush()
+        print(f"✅ Logged metrics for epoch {epoch} into new event file in {self.train_log_dir}")
+
         
-        print(f"Logged metrics for epoch {epoch}")
+    def on_train_end(self, logs=None):
+        # Close the file writer when training ends
+        if self.file_writer:
+            self.file_writer.close()
+            # Explicitly set to None to ensure a new writer is created on next on_train_begin
+            self.file_writer = None 
+
+
+
+# class CustomTensorBoard(Callback):
+#     def __init__(self, base_log_dir, models_dir, **kwargs):
+#         super(CustomTensorBoard, self).__init__()
+#         self.base_log_dir = base_log_dir
+#         self.train_log_dir = os.path.join(base_log_dir, 'train')
+#         self.models_dir = models_dir
+#         self.latest_epoch = 0
+#         latest_weight = max(glob.glob(os.path.join(self.train_log_dir, 'events*.v2')), key=os.path.getctime, default=None)
+#         if latest_weight is not None:
+#             latest_epoch = int(latest_weight.split('.')[-2])
+#             print("latest epoch is ",10+latest_epoch)
+#             self.latest_epoch = 10+latest_epoch
+    
+
+#     def set_model(self, model):
+#         self.model = model
+
+#     def on_train_begin(self, logs=None):
+#         # Ensure the log directory exists
+#         os.makedirs(self.train_log_dir, exist_ok=True)
+        
+#         # Load weights from the latest checkpoint to continue training
+#         latest_checkpoint = tf.train.latest_checkpoint(self.train_log_dir)
+#         if latest_checkpoint:
+#             print(f"Resuming training from checkpoint: {latest_checkpoint}")
+#             # Extract the epoch number from the checkpoint file name
+#             # self.latest_epoch = int(latest_checkpoint.split('-')[-1].split('.')[0])
+#             print(f"Resuming from epoch {self.latest_epoch}")
+
+#     def on_epoch_end(self, epoch, logs=None):
+#         # Log metrics for TensorBoard
+#         with tf.summary.create_file_writer(self.train_log_dir, filename_suffix=".v2").as_default():
+#             for metric_name, value in logs.items():
+#                 tf.summary.scalar(metric_name, value, step=self.latest_epoch+epoch)
+        
+#         print(f"Logged metrics for epoch {epoch}")
         
 # class CustomTensorBoard(tf.keras.callbacks.TensorBoard):
 #     def __init__(self, base_log_dir, **kwargs):
@@ -3730,41 +4053,3 @@ def refine_prediction1(crop_img, mask, model, model_128, folder, new_image_size=
     nib.save(nib.Nifti1Image(pred_192.astype(np.int32), np.eye(4)), os.path.join(folder_path, 'second_prediction.nii.gz'))
     return pred_192
 
-def visualize_tensors(tensors, col_wrap=8, col_names=None, title=None):
-    M = len(tensors)
-    N = len(next(iter(tensors.values())))
-
-    cols = col_wrap
-    rows = math.ceil(N/cols) * M
-
-    d = 2.5
-    fig, axes = plt.subplots(rows, cols, figsize=(d*cols, d*rows))
-    if rows == 1:
-      axes = axes.reshape(1, cols)
-
-    for g, (grp, tensors) in enumerate(tensors.items()):
-        for k, tensor in enumerate(tensors):
-            col = k % cols
-            row = g + M*(k//cols)
-            x = tensor.detach().cpu().numpy().squeeze()
-            ax = axes[row,col]
-            if len(x.shape) == 2:
-                ax.imshow(x,vmin=0, vmax=1, cmap='gray')
-            else:
-                ax.imshow(E.rearrange(x,'C H W -> H W C'))
-            if col == 0:
-                ax.set_ylabel(grp, fontsize=16)
-            if col_names is not None and row == 0:
-                ax.set_title(col_names[col])
-
-    for i in range(rows):
-        for j in range(cols):
-            ax = axes[i,j]
-            ax.grid(False)
-            ax.set_xticks([])
-            ax.set_yticks([])
-
-    if title:
-        plt.suptitle(title, fontsize=20)
-
-    plt.tight_layout()

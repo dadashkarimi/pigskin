@@ -54,38 +54,75 @@ import os
 from utils import *
 from help import *
 
+import os
+import numpy as np
+from sklearn.mixture import GaussianMixture
+from scipy.ndimage import gaussian_filter, binary_fill_holes, zoom
+
 
 parser = argparse.ArgumentParser(description='Process some integers.')
 parser.add_argument('-lr','--learning_rate',type=float, default=0.00001, help="learning rate")
 parser.add_argument('-zb','--zero_background',type=float, default=0.2, help="zero background")
 parser.add_argument('-nc','--nb_conv_per_level',type=int, default=2, help="learning rate")
 parser.add_argument('-ie','--initial_epoch',type=int,default=0,help="initial epoch")
-parser.add_argument('-sc','--scale',type=float,default=0.2,help="scale")
+parser.add_argument('-sc','--scale',type=float,default=1.0,help="scale")
 parser.add_argument('-b','--batch_size',default=8,type=int,help="initial epoch")
 parser.add_argument('-m','--num_dims',default=192,type=int,help="number of dims")
 parser.add_argument('-k1','--num_brain_classes',default=6,type=int,help="number of dims")
 parser.add_argument('-k2','--num_anat_classes',default=6,type=int,help="number of dims")
 parser.add_argument('-model', '--model', choices=['gmm','hmrf'], default='192Net')
+parser.add_argument('-nt','--num_trainings',default=0,type=int,help="number of dims")
+
 parser.add_argument('-o', '--olfactory', action='store_true', help="Flag to disable number of brain classes")
 parser.add_argument('-use_original', '--use_original', action='store_true', help="use original images")
+parser.add_argument('-t2', '--t2', action='store_true', help="use t2 images")
+parser.add_argument('-t1', '--t1', action='store_true', help="use t1 images")
+parser.add_argument('-unique', '--unique', action='store_true', help="unique pigs")
+parser.add_argument('-injury', '--injury', action='store_true', help="unique pigs")
 
 args = parser.parse_args()
 scaling_factor = 1.0
 
-if args.num_dims==128:
-    scaling_factor = 0.6
+
 
 log_dir = 'logs'
 models_dir = 'models'
 num_epochs=param_3d.epoch_num
 lr=args.learning_rate
 
-if args.model=='gmm':
+print(args.num_trainings)
+if args.model=='gmm' and args.num_trainings:
+    log_dir += '_gmm_new_'+str(args.num_trainings)+'_'
+    models_dir += '_gmm_new_'+str(args.num_trainings)+'_' 
+elif args.model=='gmm':
     log_dir += '_gmm_'
-    models_dir += '_gmm_' 
+    models_dir += '_gmm_'
 elif args.model=='hmrf':
     log_dir += '_hmrf_'
     models_dir += '_hmrf_' 
+
+if args.scale != 1:
+    scaling_factor = args.scale
+    log_dir += '_scale_'+str(args.scale)+'_'
+    models_dir += '_scale_'+str(args.scale)+'_' 
+
+if args.t1:
+    print("only t1 ########")
+    log_dir += 't1_'
+    models_dir += 't1_' 
+elif args.t2:
+    print("only t2 ########")
+    log_dir += 't2_'
+    models_dir += 't2_' 
+elif args.unique:
+    print("only unique")
+    log_dir += 'unique_'
+    models_dir += 'unique_' 
+
+if args.injury:
+    print("injury")
+    log_dir += 'injury_'
+    models_dir += 'injury_' 
     
 k1=args.num_brain_classes
 k2=args.num_anat_classes
@@ -107,32 +144,26 @@ if args.use_original:
     
 reduce_lr = ReduceLROnPlateau(monitor='loss', factor=0.95, patience=20, verbose=1, min_lr=1e-7)
 
-latest_weight = max(glob.glob(os.path.join(models_dir, 'weights_epoch_*.h5')), key=os.path.getctime, default=None)
-
-latest_epoch = 0
-if latest_weight is not None:
-    latest_epoch = int(latest_weight.split('_')[-1].split('.')[0])
+weight_files = glob.glob(os.path.join(models_dir, 'weights_*.h5'))
+if weight_files:
+    # sort by filename string itself → works because YYYY-MM-DD_HH-MM is lexicographic
+    latest_weight = sorted(weight_files)[-1]
     checkpoint_path = latest_weight
+    print(f"Loading latest weights: {checkpoint_path}")
 else:
     checkpoint_path = os.path.join(models_dir, 'weights_epoch_0.h5')
+    print("No checkpoint found, starting fresh.")
 
-weights_saver = PeriodicWeightsSaver(filepath=models_dir, latest_epoch=latest_epoch, save_freq=20)  # Save weights every 100 epochs
+weights_saver = PeriodicWeightsSaver(filepath=models_dir, save_freq=1)  # Save weights every 100 epochs
 
 
 early_stopping_callback = EarlyStoppingByLossVal(monitor='loss', value=1e-4, verbose=1)
 
 
+# Assuming log_dir and models_dir are already defined in your script
 TB_callback = CustomTensorBoard(
     base_log_dir=log_dir,
-    models_dir=models_dir,
-    histogram_freq=1000,
-    write_graph=True,
-    write_images=False,
-    write_steps_per_second=False,
-    update_freq='epoch',
-    profile_batch=0,
-    embeddings_freq=0,
-    embeddings_metadata=None
+    models_dir=models_dir
 )
 
 if not os.path.exists(log_dir):
@@ -145,11 +176,11 @@ if not os.path.exists(models_dir):
 # path = "/cbica/home/dadashkj/uiuc_pig_brain_atlas/v2.1_12wk_Atlas/Combined_Maps_12wk/Combined_thr50_12wk.nii"
 # pig_brain_map = [sf.load_volume(str(path)).resize(0.7).reshape([param_3d.img_size_192,]*3).data]
 
-path = "/cbica/home/dadashkj/uiuc_pig_brain_atlas/v2.1_12wk_Atlas/Combined_Maps_12wk/Combined_thr50_12wk.nii"
-pig_brain = sf.load_volume(str(path)).resize(1.2).reshape([param_3d.img_size_192,]*3).data
-pig_brain = extend_label_map_with_surfa(pig_brain,scale_factor=80)
-pig_brain = dilate_label_map(pig_brain)
-pig_brain_map = [pig_brain]
+# path = "/cbica/home/dadashkj/uiuc_pig_brain_atlas/v2.1_12wk_Atlas/Combined_Maps_12wk/Combined_thr50_12wk.nii"
+# pig_brain = sf.load_volume(str(path)).resize(1.2).reshape([args.num_dims,]*3).data
+# pig_brain = extend_label_map_with_surfa(pig_brain,scale_factor=80)
+# pig_brain = dilate_label_map(pig_brain)
+# pig_brain_map = [pig_brain]
 
 
 def mask_bg_near_fg(fg, bg, dilation_iter=5):
@@ -182,237 +213,463 @@ import os
 from utils import *
 from help import *
 
-def build_hmrf_label_map(k1=6, k2=6):
-    # n_classes = k1
-    beta = 1.0
-    max_iter = 15
-    sigma = 0.8  # smoothing before clustering
+# def build_hmrf_label_map(k1=6, k2=6):
+#     # n_classes = k1
+#     beta = 1.0
+#     max_iter = 10
+#     sigma = 1.0  # smoothing before clustering
 
-    folders_path = [
-        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/template/",
-        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-T2",
-        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/75",
-        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/79-T2",
+    
+#     folders_path = [
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/template/",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-T2",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-3day",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-3day-T2",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-1month",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-1month-T2",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-3month",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-3month-T2",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-6month",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-6month-T2",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/79",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/79-T2",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/106-6month/",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/106-6month-T2/",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/93",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/93-T2"
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/75",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/78",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/82",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/101"
+#     ]
+    
+#     if args.t1:
+#         folders_path = [
+#             "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/template/",
+#             "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-3day",
+#             "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-1month",
+#             "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-3month",
+#             "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-6month",
+#             "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/79",
+#             "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/106-6month/",
+#             "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/93",
+#             "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/75",
+#             "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/78",
+#             "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/82",
+#             "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/101"
+#         ]
+
+#     # scaling_factor = 0.7
+#     predicted_anat_labels = []
+
+#     def load_volume_file(folder_path, file_name):
+#         for ext in ['.nii.gz', '.nii']:
+#             file_path = os.path.join(folder_path, file_name + ext)
+#             print(f"Checking: {repr(file_path)}")
+#             if os.path.exists(file_path):
+#                 return sf.load_volume(file_path).reshape([param_3d.img_size_256] * 3).data
+#         raise FileNotFoundError(f"{file_name} not found in {folder_path}")
+
+#     for folder_path in folders_path:
+#         pig_anat = load_volume_file(folder_path, 'anat')
+#         pig_brain_mask = load_volume_file(folder_path, 'anat_brain_olfactory_mask')
+#         pig_brain_mask = (pig_brain_mask > 0).astype(np.uint8)
+
+#         # Preprocess
+#         pig_anat = gaussian_filter(pig_anat, sigma=sigma)
+#         pig_brain_mask = binary_fill_holes(pig_brain_mask)
+
+#         pig_anat = sf.Volume(zoom(pig_anat, scaling_factor, order=1)).reshape((256,) * 3).data
+#         pig_brain_mask = sf.Volume(zoom(pig_brain_mask, scaling_factor, order=1)).reshape((256,) * 3).data
+#         pig_brain_mask = binary_fill_holes(pig_brain_mask)
+
+#         # Brain region HMRF
+#         pig_brain = pig_anat * pig_brain_mask
+#         pig_brain = normalize(pig_brain.astype(np.float32))
+#         init_brain_labels = kmeans_init(pig_brain, pig_brain_mask, n_classes=k1)
+#         brain_seg = run_hmrf_em(pig_brain, pig_brain_mask, init_brain_labels, n_classes=k1, beta=beta, max_iter=max_iter)
+#         brain_seg = fill_holes_per_class(brain_seg)
+#         brain_seg = soften_labels_via_gaussian(brain_seg,sigma=sigma)
+        
+#         # Non-brain region HMRF
+#         pig_skull = pig_anat.copy()
+#         pig_skull[pig_brain_mask == 1] = 0
+#         skull_mask = (pig_brain_mask == 0).astype(np.uint8)
+#         pig_skull = normalize(pig_skull.astype(np.float32))
+#         init_skull_labels = kmeans_init(pig_skull, skull_mask, n_classes=k2)
+#         skull_seg = run_hmrf_em(pig_skull, skull_mask, init_skull_labels, n_classes=k2, beta=beta, max_iter=max_iter)
+
+#         skull_seg = fill_holes_per_class(skull_seg)
+#         skull_seg = soften_labels_via_gaussian(skull_seg,sigma=sigma)
+    
+
+#         # Combine brain and non-brain
+#         skull_seg[pig_brain_mask == 1] = 0
+#         skull_seg = shift_non_zero_elements(skull_seg, k1)
+#         final_seg = np.where(brain_seg > 0, brain_seg, skull_seg)
+
+#         # Final resizing
+#         zoomed_predicted_anat_labels = sf.Volume(final_seg).reshape([args.num_dims,] * 3)
+#         predicted_anat_labels.append(zoomed_predicted_anat_labels)
+
+#     return predicted_anat_labels
+
+import re
+from collections import defaultdict
+
+def extract_pig_id(folder_path):
+    if "template" in folder_path:
+        return "81"
+    match = re.search(r"/(\d+)", folder_path)
+    return match.group(1) if match else folder_path
+
+import os
+import re
+from collections import defaultdict
+from sklearn.mixture import GaussianMixture
+from scipy.ndimage import gaussian_filter, binary_fill_holes
+import numpy as np
+import surfa as sf
+import param_3d
+from utils import shift_non_zero_elements
+
+# def build_gmm_label_map(k1=5, k2=6):
+#     k1=5
+
+#     injury_keywords = ["3day", "1month", "3month", "6month"]
+
+#     all_folders = [
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-pre",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-pre-T2",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-3day",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-3day-T2",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-1month",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-1month-T2",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-3month",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-3month-T2",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-6month",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-6month-T2",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/79",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/79-T2",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/93",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/93-T2",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/75",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/78",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/82",
+#         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/101"
+#     ]
+
+#     def load_volume(folder, name):
+#         for ext in ['.nii.gz', '.nii']:
+#             path = os.path.join(folder, name + ext)
+#             if os.path.exists(path):
+#                 return sf.load_volume(path).reshape((args.num_dims,) * 3).data
+#         raise FileNotFoundError(f"Missing {name} in {folder}")
+
+#     if not args.injury:
+#         all_folders = [
+#             f for f in all_folders
+#             if not any(injury_kw in f for injury_kw in injury_keywords)
+#         ]
+#     # Filter by --t1 or --t2
+#     if args.t1:
+#         folders_path = [f for f in all_folders if "-T2" not in f]
+#     elif args.t2:
+#         folders_path = [f for f in all_folders if "-T2" in f]
+#     else:
+#         folders_path = all_folders
+
+#     # Unique pig filtering
+#     if args.unique:
+#         grouped = defaultdict(dict)
+#         for folder in folders_path:
+#             basename = os.path.basename(folder)
+
+#             # Normalize pig ID and base ID
+#             if "template" in folder:
+#                 pig_id = "81"
+#                 base_id = "template"
+#             else:
+#                 match = re.search(r'/(\d+)(-[^/]*)?', folder)
+#                 pig_id = match.group(1) if match else basename
+#                 base_id = basename.replace("-T2", "")
+
+#             if basename.endswith("-T2"):
+#                 grouped[base_id]["t2"] = folder
+#             else:
+#                 grouped[base_id]["t1"] = folder
+
+#         folders_path = []
+#         pigs_used = set()
+
+#         # Add template (pig 81) first if it exists
+#         if "template" in grouped and len(pigs_used) < args.num_trainings:
+#             folders_path.append(grouped["template"]["t1"])
+#             if "t2" in grouped["template"]:
+#                 folders_path.append(grouped["template"]["t2"])
+#             pigs_used.add("81")
+
+#         for base, paths in grouped.items():
+#             match = re.match(r"(\d+)", base)
+#             pig_id = match.group(1) if match else base
+
+#             if pig_id in pigs_used:
+#                 continue
+#             if len(pigs_used) >= args.num_trainings:
+#                 break
+
+#             if "t1" in paths:
+#                 folders_path.append(paths["t1"])
+#             if "t2" in paths:
+#                 folders_path.append(paths["t2"])
+#             pigs_used.add(pig_id)
+
+
+
+#     if args.num_trainings > 0:
+#         folders_path = folders_path[:args.num_trainings]
+
+        
+#     predicted_anat_labels = []
+#     sigma = 0.8
+#     i = 0
+
+#     while i < len(folders_path):
+#         t1_folder = folders_path[i]
+#         t2_folder = None
+
+#         if not args.t1 and not args.t2:
+#             if i + 1 < len(folders_path):
+#                 next_folder = folders_path[i + 1]
+#                 if "-T2" in next_folder and t1_folder.replace("-T2", "") in next_folder:
+#                     t2_folder = next_folder
+
+#         has_t2 = t2_folder is not None
+
+#         anat_t1 = load_volume(t1_folder, "anat")
+#         mask = load_volume(t1_folder, "anat_brain_olfactory_mask") > 0
+#         mask = binary_fill_holes(mask).astype(np.uint8)
+
+#         anat_t1 = gaussian_filter(anat_t1, sigma)
+
+#         if has_t2:
+#             anat_t2 = load_volume(t2_folder, "anat")
+#             anat_t2 = gaussian_filter(anat_t2, sigma)
+#             anat_combined = np.stack([anat_t1, anat_t2], axis=-1)
+#             brain_data = anat_combined[mask == 1].reshape(-1, 2)
+#             non_brain_data = anat_combined[mask == 0].reshape(-1, 2)
+#         else:
+#             brain_data = anat_t1[mask == 1].reshape(-1, 1)
+    
+#             # Exclude air from non-brain
+#             non_brain_mask = (mask == 0) & (anat_t1 > 0)
+#             non_brain_data = anat_t1[non_brain_mask].reshape(-1, 1)
+
+#         # Fit GMM
+#         gmm_brain = GaussianMixture(n_components=k1).fit(brain_data)
+#         gmm_non_brain = GaussianMixture(n_components=k2).fit(non_brain_data)
+    
+#         # Prepare label volume
+#         flat_shape = np.prod(mask.shape)
+#         full_seg = np.zeros(flat_shape, dtype=int)
+    
+#         # Brain label assignment
+#         brain_idx = mask.flatten() == 1
+#         brain_pred = gmm_brain.predict(brain_data)
+#         full_seg[brain_idx] = brain_pred + 1  # labels: 1 to k1
+    
+#         # Non-brain label assignment (excluding zero background)
+#         anat_flat = anat_t1.flatten()
+#         non_brain_mask_flat = (mask.flatten() == 0) & (anat_flat > 0)
+#         non_brain_pred = gmm_non_brain.predict(non_brain_data)
+#         full_seg[non_brain_mask_flat] = non_brain_pred + k1 + 1  # labels: k1+1 to k1+k2
+    
+#         # Final reshape
+#         full_seg = full_seg.reshape((args.num_dims,) * 3)
+#         full_seg = shift_non_zero_elements(full_seg, 1)
+
+#         predicted_anat_labels.append(sf.Volume(full_seg).reshape((args.num_dims,) * 3))
+
+
+#         i += 2 if has_t2 else 1
+
+#     return predicted_anat_labels
+
+def build_gmm_label_map(k1=5, k2=6):
+    k1 = 5  # override, as in your original
+
+    injury_keywords = ["3day", "1month", "3month", "6month"]
+
+    all_folders = [
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-pre",
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-pre-T2",
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-3day",
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-3day-T2",
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-1month",
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-1month-T2",
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-3month",
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-3month-T2",
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-6month",
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-6month-T2",
         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/79",
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/79-T2",
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/93",
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/93-T2",
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/75",
         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/78",
-        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/106_6month/",
         "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/82",
-        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/101",
-        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/93"
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/101"
     ]
-        #     "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-T2",
-        # "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/75",
-        # "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/79-T2",
-        # "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/79",
-        # "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/78",
-        # "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/106_6month/",
-        # "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/82",
-        # "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/101",
-        # "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/93"
 
-        #     "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/75",
-        # "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/79-T2",
-        # "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/79",
-        # "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/78",
-        # "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/106_6month/",
-        # "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/82",
-        # "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/101",
-        # "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/93",
+    def load_volume(folder, name):
+        for ext in ('.nii.gz', '.nii'):
+            path = os.path.join(folder, name + ext)
+            if os.path.exists(path):
+                vol = sf.load_volume(path)
+                if args.num_dims == 128:  # resample for 128 pipeline
+                    vol = vol.resize(scaling_factor)
+                vol = vol.reshape((192,) * 3)
+                return vol.data
+        raise FileNotFoundError(f"Missing {name} in {folder}")
 
+    # --- Folder filtering ---
+    if not args.injury:
+        all_folders = [f for f in all_folders if not any(kw in f for kw in injury_keywords)]
+    if args.t1:
+        folders_path = [f for f in all_folders if "-T2" not in f]
+    elif args.t2:
+        folders_path = [f for f in all_folders if "-T2" in f]
+    else:
+        folders_path = all_folders
 
-    # scaling_factor = 0.7
-    predicted_anat_labels = []
+    # --- Unique pig filtering ---
+    if args.unique:
+        grouped = defaultdict(dict)
+        for folder in folders_path:
+            basename = os.path.basename(folder)
+            if "template" in folder:
+                pig_id, base_id = "81", "template"
+            else:
+                match = re.search(r'/(\d+)(-[^/]*)?', folder)
+                pig_id = match.group(1) if match else basename
+                base_id = basename.replace("-T2", "")
+            if basename.endswith("-T2"):
+                grouped[base_id]["t2"] = folder
+            else:
+                grouped[base_id]["t1"] = folder
 
-    def load_volume_file(folder_path, file_name):
-        for ext in ['.nii.gz', '.nii']:
-            file_path = os.path.join(folder_path, file_name + ext)
-            print(f"Checking: {repr(file_path)}")
-            if os.path.exists(file_path):
-                return sf.load_volume(file_path).reshape([param_3d.img_size_256] * 3).data
-        raise FileNotFoundError(f"{file_name} not found in {folder_path}")
+        folders_path, pigs_used = [], set()
+        if "template" in grouped and len(pigs_used) < args.num_trainings:
+            folders_path.append(grouped["template"]["t1"])
+            if "t2" in grouped["template"]:
+                folders_path.append(grouped["template"]["t2"])
+            pigs_used.add("81")
 
-    for folder_path in folders_path:
-        pig_anat = load_volume_file(folder_path, 'anat')
-        pig_brain_mask = load_volume_file(folder_path, 'anat_brain_olfactory_mask')
-        pig_brain_mask = (pig_brain_mask > 0).astype(np.uint8)
+        for base, paths in grouped.items():
+            pig_id = re.match(r"(\d+)", base).group(1) if re.match(r"(\d+)", base) else base
+            if pig_id in pigs_used:
+                continue
+            if len(pigs_used) >= args.num_trainings:
+                break
+            if "t1" in paths: folders_path.append(paths["t1"])
+            if "t2" in paths: folders_path.append(paths["t2"])
+            pigs_used.add(pig_id)
 
-        # Preprocess
-        sigma = 0.8
-        pig_anat = gaussian_filter(pig_anat, sigma=sigma)
-        pig_brain_mask = binary_fill_holes(pig_brain_mask)
+    if args.num_trainings > 0:
+        folders_path = folders_path[:args.num_trainings]
 
-        pig_anat = sf.Volume(zoom(pig_anat, scaling_factor, order=1)).reshape((256,) * 3).data
-        pig_brain_mask = sf.Volume(zoom(pig_brain_mask, scaling_factor, order=1)).reshape((256,) * 3).data
-        pig_brain_mask = binary_fill_holes(pig_brain_mask)
+    # --- Main loop ---
+    predicted_anat_labels, sigma, i = [], 0.8, 0
+    while i < len(folders_path):
+        t1_folder = folders_path[i]
+        t2_folder = None
+        if not args.t1 and not args.t2 and i + 1 < len(folders_path):
+            if "-T2" in folders_path[i + 1] and t1_folder.replace("-T2", "") in folders_path[i + 1]:
+                t2_folder = folders_path[i + 1]
+        has_t2 = t2_folder is not None
 
-        # Brain region HMRF
-        pig_brain = pig_anat * pig_brain_mask
-        pig_brain = normalize(pig_brain.astype(np.float32))
-        init_brain_labels = kmeans_init(pig_brain, pig_brain_mask, n_classes=k1)
-        brain_seg = run_hmrf_em(pig_brain, pig_brain_mask, init_brain_labels, n_classes=k1, beta=beta, max_iter=max_iter)
-        brain_seg = fill_holes_per_class(brain_seg)
-        brain_seg = soften_labels_via_gaussian(brain_seg,sigma=0.8)
-        
-        # Non-brain region HMRF
-        pig_skull = pig_anat.copy()
-        pig_skull[pig_brain_mask == 1] = 0
-        skull_mask = (pig_brain_mask == 0).astype(np.uint8)
-        pig_skull = normalize(pig_skull.astype(np.float32))
-        init_skull_labels = kmeans_init(pig_skull, skull_mask, n_classes=k2)
-        skull_seg = run_hmrf_em(pig_skull, skull_mask, init_skull_labels, n_classes=k2, beta=beta, max_iter=max_iter)
+        anat_t1 = load_volume(t1_folder, "anat")
+        mask = load_volume(t1_folder, "anat_brain_olfactory_mask") > 0
+        mask = binary_fill_holes(mask).astype(np.uint8)
+        anat_t1 = gaussian_filter(anat_t1, sigma)
 
-        skull_seg = fill_holes_per_class(skull_seg)
-        skull_seg = soften_labels_via_gaussian(skull_seg,sigma=0.8)
-    
+        if has_t2:
+            anat_t2 = load_volume(t2_folder, "anat")
+            anat_t2 = gaussian_filter(anat_t2, sigma)
+            anat_combined = np.stack([anat_t1, anat_t2], axis=-1)
+            brain_mask = mask == 1
+            non_brain_mask = (mask == 0) & (anat_t1 > 0)
+            brain_data = anat_combined[brain_mask].reshape(-1, 2)
+            non_brain_data = anat_combined[non_brain_mask].reshape(-1, 2)
+        else:
+            brain_mask = mask == 1
+            non_brain_mask = (mask == 0) & (anat_t1 > 0)
+            brain_data = anat_t1[brain_mask].reshape(-1, 1)
+            non_brain_data = anat_t1[non_brain_mask].reshape(-1, 1)
 
-        # Combine brain and non-brain
-        skull_seg[pig_brain_mask == 1] = 0
-        skull_seg = shift_non_zero_elements(skull_seg, k1)
-        final_seg = np.where(brain_seg > 0, brain_seg, skull_seg)
+        # Fit GMMs
+        gmm_brain = GaussianMixture(n_components=k1).fit(brain_data)
+        gmm_non_brain = GaussianMixture(n_components=k2).fit(non_brain_data)
 
-        # Final resizing
-        zoomed_predicted_anat_labels = sf.Volume(final_seg).reshape([args.num_dims,] * 3)
-        predicted_anat_labels.append(zoomed_predicted_anat_labels)
+        # Predictions
+        brain_pred = gmm_brain.predict(brain_data)
+        non_brain_pred = gmm_non_brain.predict(non_brain_data)
 
-    return predicted_anat_labels
+        # Assemble full volume using SAME masks
+        full_seg = np.zeros(mask.size, dtype=int)
+        full_seg[brain_mask.flatten()] = brain_pred + 1
+        full_seg[non_brain_mask.flatten()] = non_brain_pred + k1 + 1
 
-    
-def build_gmm_label_map(k1=6,k2=6):
-    from sklearn.mixture import GaussianMixture
-    from scipy.ndimage import gaussian_filter
-    
-    folders_path = [
-            "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/template/",
-            "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-T2",
-            "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/75",
-            "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/79-T2",
-            "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/79",
-            "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/78",
-            "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/106_6month/",
-            "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/82",
-             "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/101",
-            "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/93"
-                   ]
-            #     "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/7646",
-            # "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/7665",
-            # "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/7778"
-    
-    # folders_path = [
-    #                 "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/template/",
-    #                 "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/106_6month/"
-    #                ]
-    if args.olfactory:
-        folders_path = ["/cbica/home/dadashkj/neuroconnlab_pig_data/dwi_PigAnatomical/john1",
-                   "/cbica/home/dadashkj/neuroconnlab_pig_data/dwi_PigAnatomical/john2",
-                   "/cbica/home/dadashkj/neuroconnlab_pig_data/dwi_PigAnatomical/john3",
-                   "/cbica/home/dadashkj/neuroconnlab_pig_data/dwi_PigAnatomical/john4",
-                        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/template/"]
+        full_seg = full_seg.reshape(mask.shape)
+        full_seg = shift_non_zero_elements(full_seg, 1)
+        predicted_anat_labels.append(sf.Volume(full_seg).reshape((192,) * 3))
 
-    predicted_anat_labels=[]
-    for folder_path in folders_path:
+        i += 2 if has_t2 else 1
 
-        from scipy.ndimage import zoom
-        
-        # geom_data = sf.load_volume(os.path.join(folder_path, 'anat.nii.gz')).geom
-        # pig_anat = sf.load_volume(os.path.join(folder_path, 'anat.nii.gz')).reshape([param_3d.img_size_256,]*3).data
-        # pig_brain_mask = sf.load_volume(os.path.join(folder_path, 'anat_brain_mask.nii.gz')).reshape([param_3d.img_size_256,]*3).data
-        def load_volume_file(folder_path, file_name):
-            # Try both extensions in a loop
-            for ext in ['.nii.gz', '.nii']:
-                file_path = os.path.join(folder_path, file_name + ext)
-                print(f"Checking: {repr(file_path)}")  # Debug print to see which path is being checked
-                if os.path.exists(file_path):
-                    return sf.load_volume(file_path).reshape([param_3d.img_size_256,]*3).data
-        
-            # If neither file is found
-            raise FileNotFoundError(f"{file_name} file not found in {folder_path}.")
-
-            
-        # geom_data = sf.load_volume(os.path.join(folder_path, 'anat.nii.gz')).geom
-        pig_anat = load_volume_file(folder_path, 'anat')
-        geom_data = pig_anat  # Assuming geom_data is the same as pig_anat.data
-        pig_brain_mask = load_volume_file(folder_path, 'anat_brain_olfactory_mask')
-        pig_brain_mask = (pig_brain_mask > 0).astype(np.uint8)
-        
-
-        sigma = 0.8  # Adjust sigma for desired smoothing effect
-        pig_anat = gaussian_filter(pig_anat, sigma=sigma)
-        
-        pig_brain_mask = ndi.binary_fill_holes(pig_brain_mask)
-        pig_brain = pig_anat * (pig_brain_mask == 1)
-        
-        pig_anat = sf.Volume(zoom(pig_anat, scaling_factor, order=1)).reshape((256,)*3).data
-        pig_brain = sf.Volume(zoom(pig_brain, scaling_factor, order=1)).reshape((256,)*3).data
-        pig_brain_mask = sf.Volume(zoom(pig_brain_mask, scaling_factor, order=1)).reshape((256,)*3).data
-        pig_brain_mask = ndi.binary_fill_holes(pig_brain_mask)
-
-        pig_skull = np.copy(pig_anat)
-        pig_skull[pig_brain_mask == 1] = 0
-        # sigma = 1  # Adjust sigma for desired smoothing effect
-        smoothed_anat = gaussian_filter(pig_anat, sigma=sigma)
-        brain_data = pig_brain.flatten().reshape(-1, 1)
-        non_brain_data = pig_skull.flatten().reshape(-1, 1)
-
-        def make_smooth(label_map,s=1):
-            smoothed_labels = gaussian_filter(label_map.astype(float), sigma=s)
-            return np.round(smoothed_labels).astype(int)
-            
-        # Apply GMM for brain regions (assumes 29 brain regions to be classified)
-        gmm_brain = GaussianMixture(n_components=k1, random_state=42)
-        gmm_brain.fit(brain_data)  # Fit GMM on the brain data
-        
-        # Apply GMM for non-brain regions (background and other tissues)
-        gmm_non_brain = GaussianMixture(n_components=k2, random_state=42)  # 0 for background, 30-40 for other tissues
-        gmm_non_brain.fit(non_brain_data)  # Fit GMM on the non-brain data
-        
-        # Predict the components (labels) for brain and non-brain regions
-        predicted_brain_labels = gmm_brain.predict(brain_data)
-
-        if k1==0:
-            pig_seg = sf.load_volume(os.path.join(folder_path, 'fast_segmentation_seg.nii.gz')).resize(1).reshape([param_3d.img_size_256,]*3).data
-            pig_seg = sf.Volume(zoom(pig_seg, scaling_factor, order=1)).reshape((256,)*3)
-            predicted_brain_labels = pig_seg
-            
-        predicted_non_brain_labels = gmm_non_brain.predict(non_brain_data)
-        
-        predicted_brain_labels = make_smooth(predicted_brain_labels,sigma)
-        predicted_non_brain_labels = make_smooth(predicted_non_brain_labels,sigma)
-        
-
-        predicted_brain_labels = predicted_brain_labels.reshape((256,256,256))
-        predicted_non_brain_labels = predicted_non_brain_labels.reshape((256,256,256))
-
-        if args.num_dims == 96:
-            from scipy.ndimage import binary_dilation
-            structure = np.ones((3, 3, 3), dtype=bool)
-            dial_mask = binary_dilation(predicted_brain_labels>0, structure=structure, iterations=10)
-            predicted_non_brain_labels = predicted_non_brain_labels*(dial_mask>0)
-            
-
-        predicted_non_brain_labels[pig_brain_mask == 1] = 0
-        predicted_non_brain_labels = shift_non_zero_elements(predicted_non_brain_labels,6)
-        predicted_anat_label = np.where(predicted_brain_labels > 0, predicted_brain_labels, predicted_non_brain_labels)
-
-        zoomed_predicted_anat_labels = sf.Volume(predicted_anat_label).reshape([args.num_dims,]*3)
-
-        predicted_anat_labels.append(zoomed_predicted_anat_labels)
     return predicted_anat_labels
 
 # predicted_anat_labels=build_gmm_label_map(5,5)
 if args.use_original:
     
+    
     folders_path = [
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/template/",
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-T2",
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-3day",
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-3day-T2",
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-1month",
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-1month-T2",
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-3month",
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-3month-T2",
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-6month",
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-6month-T2",
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/79",
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/79-T2",
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/106-6month/",
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/106-6month-T2/",
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/93",
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/93-T2",
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/75",
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/78",
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/82",
+        "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/101"
+    ]
+    
+    if not args.t2:
+        folders_path = [
             "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/template/",
-            "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-T2",
-            "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/75",
-            "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/79-T2",
+            "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-3day",
+            "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-1month",
+            "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-3month",
+            "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/81-6month",
             "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/79",
+            "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/106-6month/",
+            "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/93",
+            "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/75",
             "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/78",
-            "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/106_6month/",
             "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/82",
-            "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/101",
-            "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/93"
-           ]
+            "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/101"
+        ]
             #     "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/7646",
             # "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/7665",
             # "/gpfs/fs001/cbica/home/dadashkj/upenn_pigAnatomical/7778"
@@ -421,12 +678,12 @@ if args.use_original:
     pig_gmm_brain_map = generator_from_pairs(image_mask_pairs)
     pig_real_brain_map = pig_gmm_brain_map
 elif args.num_dims==param_3d.img_size_128 and args.model=="gmm":
-    pig_gmm_brain_map = build_gmm_label_map(6,3)
+    pig_gmm_brain_map = build_gmm_label_map(6,6)
     config_file= "params_128.json"
 elif args.model=="hmrf":
     pig_brain_map = build_hmrf_label_map(6,6)
 else:
-    pig_brain_map = build_gmm_label_map(k1,9)
+    pig_brain_map = build_gmm_label_map(k1,6)
     config_file= "params_192.json"
 
 
@@ -434,6 +691,7 @@ if args.num_dims==param_3d.img_size_96:
     pig_brain_map = pig_gmm_brain_map
     config_file = "params_96.json"
 elif args.num_dims==param_3d.img_size_128:
+    pig_brain_map = pig_gmm_brain_map
     config_file = "params_128.json"
 elif args.num_dims==param_3d.img_size_192:
     config_file = "params_192.json"
@@ -448,19 +706,23 @@ with open(config_file, "r") as json_file:
     config = json.load(json_file)
 
     
-gen=generator_brain_window_Net(pig_brain_map,args.num_dims)
+gen=generator_brain_window_Net(pig_brain_map,192)
 
 model_pig_config = config["pig_48"]
 model_shapes_config = config["shapes"]
-model_pig_config["in_shape"]=[ args.num_dims, args.num_dims, args.num_dims]
-model_shapes_config["in_shape"]=[ args.num_dims, args.num_dims, args.num_dims]
+
+model_pig_config["in_shape"]    = [192,192,192]
+model_shapes_config["in_shape"] = [192,192,192]
+
+model_pig_config["in_shape"]=[192,192,192]
+model_shapes_config["in_shape"]=[192,192,192]
 
 model3_config = config["labels_to_image_model_48"]
 model3_config["labels_out"] = {int(key): value for key, value in model3_config["labels_out"].items()}
-model3_config["in_shape"]=[ args.num_dims, args.num_dims, args.num_dims]
+model3_config["in_shape"]=[192,192,192]
 model_pig = create_model(model_pig_config)
 model_shapes = create_model(model_shapes_config)
-shapes = draw_shapes_easy(shape = (args.num_dims,)*3)   
+shapes = draw_shapes_easy(shape = (192,)*3)   
 
 labels_to_image_model = create_model(model3_config)
 
@@ -472,7 +734,7 @@ if __name__ == "__main__":
     steps_per_epoch = 100
     min_max_norm = Lambda(lambda x: (x - K.min(x)) / (K.max(x) - K.min(x)+ epsilon) * (1.0) )
 
-    unet_model = vxm.networks.Unet(inshape=(args.num_dims,args.num_dims,args.num_dims, 1), nb_features=(en, de),
+    unet_model = vxm.networks.Unet(inshape=(192,192,192, 1), nb_features=(en, de),
                    nb_conv_per_level=2,
                    final_activation_function='softmax')
 
@@ -541,7 +803,7 @@ if __name__ == "__main__":
 
     elif args.num_dims == param_3d.img_size_128:
 
-        input_img = Input(shape=(param_3d.img_size_128,param_3d.img_size_128,param_3d.img_size_128,1))
+        input_img = Input(shape=(192,192,192,1))
         
         _, fg = model_pig(input_img[None,...,None])
         _, bg = model_shapes(input_img[None,...,None])
@@ -557,42 +819,7 @@ if __name__ == "__main__":
         combined_model = Model(inputs=input_img, outputs=segmentation)
         combined_model.add_loss(soft_dice(y, segmentation))
         combined_model.compile(optimizer=Adam(learning_rate=lr))
-        
-        # print("$$$$$$$$$$$$$ model building")
-        # input_img = Input(shape=(param_3d.img_size_128,param_3d.img_size_128,param_3d.img_size_128,1))
-        
-        # _, fg = model_pig(input_img[None,...,None])
-        
-        # shapes = draw_shapes_easy(shape = (param_3d.img_size_128,)*3,num_label=8)
-        
-        
-        # shapes = tf.squeeze(shapes)
-        # shapes = tf.cast(shapes, tf.int32)
-        
-        # bones = draw_bones_only(shape = (param_3d.img_size_128,)*3,num_labels=8,num_bones=250)
-        # bones = tf.cast(bones, tf.int32)
-        # bones = shift_non_zero_elements(bones,6)
-        
 
-        # shapes2 = draw_layer_elipses(shape=(param_3d.img_size_128,)*3, num_labels=8, num_shapes=50, sigma=2)
-        # shapes2 = tf.squeeze(shapes2)
-        # shapes2 = tf.cast(shapes2, tf.int32)
-        # shapes2 = shift_non_zero_elements(shapes2,6)
-        
-
-        # shapes2 = bones + shapes2 * tf.cast(bones == 0,tf.int32)
-        # _, bg = model_shapes(shapes2[None,...,None])
-        # result = fg[0,...,0] + bg[0,...,0] * tf.cast(fg[0,...,0] == 0,tf.int32)
-        # result= result[None,...,None]
-    
-        
-        # generated_img , y = labels_to_image_model(result)
-        # generated_img_norm = min_max_norm(generated_img)
-        
-        # segmentation = unet_model(generated_img_norm)
-        # combined_model = Model(inputs=input_img, outputs=segmentation)
-        # combined_model.add_loss(soft_dice(y, segmentation))
-        # combined_model.compile(optimizer=Adam(learning_rate=0.00001))
 
     elif args.num_dims == param_3d.img_size_192:
         input_img = Input(shape=(param_3d.img_size_192,param_3d.img_size_192,param_3d.img_size_192,1))
