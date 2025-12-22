@@ -5,7 +5,7 @@
 
 ## 📦 Requirements
 
-- **Apptainer** (formerly Singularity) installed for running PIGSIN using apptainer sif file
+- **Apptainer** (formerly Singularity) installed for running PIGSKIN using apptainer sif file
 ---
 
 ## 📥 Installation
