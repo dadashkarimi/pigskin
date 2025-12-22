@@ -70,11 +70,3 @@ apptainer --version
 If input files are not visible inside the container, ensure you are running the command from a directory that has access to those paths, or explicitly bind them:
 
 apptainer exec --bind /path/to/data pigskin.sif ...
-
-
----
-
-If you want, I can also:
-- Add a **Usage / Arguments** section from `pigskin.py --help`
-- Create a **CBICA Slurm example**
-- Add a **Docker → Apptainer build note**
