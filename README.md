@@ -5,8 +5,7 @@
 
 ## 📦 Requirements
 
-- Linux system
-- **Apptainer** (formerly Singularity) installed
+- **Apptainer** (formerly Singularity) installed for running PIGSIN using apptainer sif file
 ---
 
 ## 📥 Installation
