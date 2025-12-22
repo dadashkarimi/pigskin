@@ -7,8 +7,6 @@
 
 - Linux system
 - **Apptainer** (formerly Singularity) installed
-- NVIDIA GPU with CUDA support (for `--nv` flag)
-
 ---
 
 ## 📥 Installation
