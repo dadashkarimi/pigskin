@@ -3,11 +3,11 @@ From: nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu20.04
 
 %files
     tf-gpu-jk.yml                             /environment.yml
-    pystrum              /opt/code/pystrum
-    neurite              /opt/code/neurite
-    voxelmorph           /opt/code/voxelmorph
-    neurite-sandbox      /opt/code/neurite-sandbox
-    voxelmorph-sandbox   /opt/code/voxelmorph-sandbox
+    libraries/pystrum              /opt/code/pystrum
+    libraries/neurite              /opt/code/neurite
+    libraries/voxelmorph           /opt/code/voxelmorph
+    libraries/neurite-sandbox      /opt/code/neurite-sandbox
+    libraries/voxelmorph-sandbox   /opt/code/voxelmorph-sandbox
 
 %post
     export DEBIAN_FRONTEND=noninteractive
