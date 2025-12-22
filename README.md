@@ -10,7 +10,7 @@ From the directory containing `Singularity.def`, build the container image:
 
 ```bash
 apptainer build pigskin.sif Singularity.def
-
+``` 
 
 This will create pigskin.sif in the current directory.
 
