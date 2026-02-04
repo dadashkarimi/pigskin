@@ -10,30 +10,22 @@
 
 ## 📥 Installation
 
-### 1. Clone the repository
-
-```bash
-git clone https://github.com/dadashkarimi/pigskin/tree/main
-cd pigskin
-````
-
----
-
-### 2. Download the Apptainer image
+### 1. Download the Apptainer image
 
 Download the `.sif` file from the following link:
 
 ```bash 
-https://upenn.box.com/s/42bwvh1urtogkleubsy86034uczc76gt?download=1
+[https://upenn.box.com/s/42bwvh1urtogkleubsy86034uczc76gt?download=1](https://upenn.box.com/s/o1h7kzlpslsnszyy7c2b88eiy65v7hgr)
 ```
 
 ---
 
-### 3. Move the `.sif` file into the project directory
+### 2. Move the `.sif` file into the project directory
 
 After downloading, move the file from your `Downloads` folder into the `pigskin` directory:
 
 ```bash
+mkdir -p $PWD/pigskin
 mv ~/Downloads/pigskin.sif $PWD/pigskin
 ```
 
@@ -44,29 +36,18 @@ mv ~/Downloads/pigskin.sif $PWD/pigskin
 Run the Apptainer image using the following command:
 
 ```bash
-cd $PWD/pigskin
-
-apptainer exec --nv pigskin.sif python pigskin.py \
-  --input input.nii.gz \
-  --output output.nii.gz
+apptainer run --no-home \
+  --bind {OUTPUT_PATH}:/output \
+  --bind {INPUT_PATH}:/input \
+  $PWD/pigskin-new.sif \
+  -i /input/image.nii.gz \
+  -o /output/output_image.nii.gz
 ```
 
 ### Notes
 
-* No manual bind mounts are required.
+* Manual bind mounts are required for input and output.
 * Replace `input.nii.gz` and `output.nii.gz` with your actual file paths.
-* The `--nv` flag enables GPU support.
-
----
-
-## 📁 Example Directory Structure
-
-```
-pigskin/
-│── pigskin.py
-│── pigskin.sif
-│── README.md
-```
 
 ---
 
@@ -74,5 +55,4 @@ pigskin/
 
 * Ensure Apptainer is installed and accessible from the command line.
 * Make sure the input file exists and is in `.nii.gz` format.
-* Confirm GPU drivers are correctly installed if using `--nv`.
 
