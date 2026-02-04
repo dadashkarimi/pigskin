@@ -26,7 +26,7 @@ After downloading, move the file from your `Downloads` folder into the `pigskin`
 
 ```bash
 mkdir -p $PWD/pigskin
-mv ~/Downloads/pigskin.sif $PWD/pigskin
+mv ~/Downloads/pigskin-new.sif $PWD/pigskin
 ```
 
 ---
@@ -36,6 +36,9 @@ mv ~/Downloads/pigskin.sif $PWD/pigskin
 Run the Apptainer image using the following command:
 
 ```bash
+
+cd $PWD/pigskin
+
 apptainer run --no-home \
   --bind {OUTPUT_PATH}:/output \
   --bind {INPUT_PATH}:/input \
