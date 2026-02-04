@@ -15,7 +15,7 @@
 Download the `.sif` file from the following link:
 
 ```bash 
-[https://upenn.box.com/s/42bwvh1urtogkleubsy86034uczc76gt?download=1](https://upenn.box.com/s/o1h7kzlpslsnszyy7c2b88eiy65v7hgr)
+https://upenn.box.com/s/o1h7kzlpslsnszyy7c2b88eiy65v7hgr
 ```
 
 ---
