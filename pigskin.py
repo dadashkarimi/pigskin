@@ -206,10 +206,14 @@ def main():
     if out_dir != "" and not os.path.exists(out_dir):
         os.makedirs(out_dir, exist_ok=True)
 
-    nib.save(
-        nib.Nifti1Image(prediction_np.astype(np.int32), affine),
-        args.output,
-    )
+    output_data = prediction_np.astype(np.int32)
+    output_img = nib.Nifti1Image(output_data, affine)
+    output_img.header.set_sform(affine)
+    output_img.header.set_qform(affine)
+    output_img.header.set_data_dtype(output_data.dtype)
+    output_img.header.set_intent(0)
+    output_img.update_header()
+    nib.save(output_img, args.output)
 
     print("Saved mask to:", args.output)
 
