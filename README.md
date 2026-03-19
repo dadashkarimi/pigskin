@@ -14,8 +14,8 @@
 
 Download the `.sif` file from the following link:
 
-```bash 
-https://upenn.box.com/s/o1h7kzlpslsnszyy7c2b88eiy65v7hgr
+```bash
+https://upenn.box.com/s/3z226jfla9a39qkzdbs7nv4f1sawwfyx
 ```
 
 ---
@@ -26,7 +26,7 @@ After downloading, move the file from your `Downloads` folder into the `pigskin`
 
 ```bash
 mkdir -p $PWD/pigskin
-mv ~/Downloads/pigskin-new.sif $PWD/pigskin
+mv ~/Downloads/pigskin.sif $PWD/pigskin
 ```
 
 ---
@@ -42,7 +42,7 @@ cd $PWD/pigskin
 apptainer run --no-home \
   --bind {OUTPUT_PATH}:/output \
   --bind {INPUT_PATH}:/input \
-  $PWD/pigskin-new.sif \
+  $PWD/pigskin.sif \
   -i /input/image.nii.gz \
   -o /output/output_image.nii.gz
 ```
