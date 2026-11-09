@@ -1,0 +1,55 @@
+name: Execute PIGTAILS student tutorial
+on:
+  push:
+    branches: [teaching/pigtails-synthetic-brain-notebook]
+    paths:
+      - notebooks/PIGTAILS_Synthetic_Brain_Student_Tutorial.ipynb
+      - .github/workflows/pigtails-tutorial.yml
+permissions:
+  contents: write
+jobs:
+  execute:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install notebook dependencies
+        run: python -m pip install numpy scipy nibabel matplotlib nbformat nbclient ipykernel
+      - name: Execute notebook on real anatomical labels
+        env:
+          MPLBACKEND: module://matplotlib_inline.backend_inline
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import nbformat
+          from nbclient import NotebookClient
+          path = Path("notebooks/PIGTAILS_Synthetic_Brain_Student_Tutorial.ipynb")
+          notebook = nbformat.read(path, as_version=4)
+          client = NotebookClient(notebook, timeout=300, kernel_name="python3", resources={"metadata": {"path": "."}})
+          try:
+              client.execute()
+          finally:
+              nbformat.write(notebook, "PIGTAILS_Real_Brain_Executed.ipynb")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: PIGTAILS-real-brain-executed
+          retention-days: 30
+          path: |
+            PIGTAILS_Real_Brain_Executed.ipynb
+            pigtails_student_outputs/*.png
+            pigtails_student_outputs/*.json
+      - name: Save executed notebook and figures on tutorial branch
+        run: |
+          mkdir -p notebooks/examples
+          cp PIGTAILS_Real_Brain_Executed.ipynb notebooks/PIGTAILS_Real_Brain_Executed.ipynb
+          cp pigtails_student_outputs/*.png notebooks/examples/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add notebooks/PIGTAILS_Real_Brain_Executed.ipynb notebooks/examples/
+          git diff --cached --quiet || git commit -m "Include executed real-brain notebook and synthetic image examples"
+          git push origin HEAD:teaching/pigtails-synthetic-brain-notebook
