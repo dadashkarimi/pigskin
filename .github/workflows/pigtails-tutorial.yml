@@ -6,7 +6,7 @@ on:
       - notebooks/PIGTAILS_Synthetic_Brain_Student_Tutorial.ipynb
       - .github/workflows/pigtails-tutorial.yml
 permissions:
-  contents: read
+  contents: write
 jobs:
   execute:
     runs-on: ubuntu-latest
@@ -43,3 +43,13 @@ jobs:
             PIGTAILS_Real_Brain_Executed.ipynb
             pigtails_student_outputs/*.png
             pigtails_student_outputs/*.json
+      - name: Save executed notebook and figures on tutorial branch
+        run: |
+          mkdir -p notebooks/examples
+          cp PIGTAILS_Real_Brain_Executed.ipynb notebooks/PIGTAILS_Real_Brain_Executed.ipynb
+          cp pigtails_student_outputs/*.png notebooks/examples/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add notebooks/PIGTAILS_Real_Brain_Executed.ipynb notebooks/examples/
+          git diff --cached --quiet || git commit -m "Include executed real-brain notebook and synthetic image examples"
+          git push origin HEAD:teaching/pigtails-synthetic-brain-notebook
